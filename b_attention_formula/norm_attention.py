@@ -1,7 +1,6 @@
 import torch
 from torch import Tensor
 
-
 def _norm_squared(x: Tensor) -> Tensor:
     return x.pow(2).sum(-1)
 
@@ -32,25 +31,25 @@ def non_causal_norm_attention(q: Tensor, k: Tensor, v: Tensor, eps=1e-8):
     :return: output of shape [..., T, m]
     """
     T = q.shape[-2]
-    q_ns = _norm_squared(q) + eps # [...T]
-    k_ns = _norm_squared(k)  # [...T]
+    q_norm = _norm_squared(q) + eps # [...T]
+    k_norm = _norm_squared(k)  # [...T]
 
     # cache during inference (all of these do not contain T)
     k_sum = k.sum(-2)  # [...d]
     v_sum = v.sum(-2)  # [...m]
-    k_ns_sum = k_ns.sum(-1, keepdim=True)  # [...1]
-    k_ns_v = torch.einsum('...T, ...Tm -> ...m', k_ns, v)  # [...m]
+    k_norm_sum = k_norm.sum(-1, keepdim=True)  # [...1]
+    k_norm_v = torch.einsum('...T, ...Tm -> ...m', k_norm, v)  # [...m]
     kv = k.transpose(-2, -1) @ v  # [...,d,m]
 
     # denominator
-    z = T * q_ns  # [...T]
+    z = T * q_norm  # [...T]
     z = z + 2 * torch.einsum('...Td, ...d -> ...T', q, k_sum)
-    z = z + k_ns_sum
+    z = z + k_norm_sum
     z = 1 / z  # [...T]
 
     # numerator
-    o = torch.einsum('...T, ...m -> ...Tm', q_ns, v_sum)
-    o = o + k_ns_v.unsqueeze(-2)
+    o = torch.einsum('...T, ...m -> ...Tm', q_norm, v_sum)
+    o = o + k_norm_v.unsqueeze(-2)
     o = o + 2 * (q @ kv)  # [...,T,m]
     return o * z.unsqueeze(-1)
 
@@ -64,25 +63,25 @@ def causal_norm_attention(q: Tensor, k: Tensor, v: Tensor, eps=1e-8):
     :return: output of shape [..., T, m]
     """
     T = q.shape[-2]
-    q_ns = _norm_squared(q) + eps  # [...T]
-    k_ns = _norm_squared(k)  # [...T]
+    q_norm = _norm_squared(q) + eps  # [...T]
+    k_norm = _norm_squared(k)  # [...T]
 
     # causal mask is NOT needed during inference, hence caching does not need to be implemented
     k_sum = k.cumsum(-2)  # [...T, d]
     v_sum = v.cumsum(-2)  # [...T, m]
-    k_ns_sum = k_ns.cumsum(-1)  # [...T]
-    k_ns_v = torch.einsum('...T, ...Tm -> ...Tm', k_ns, v).cumsum(-2)  # [..., T, m]
+    k_norm_sum = k_norm.cumsum(-1)  # [...T]
+    k_norm_v = torch.einsum('...T, ...Tm -> ...Tm', k_norm, v).cumsum(-2)  # [..., T, m]
     kv = torch.einsum('...Td, ...Tm -> ...Tdm', k, v).cumsum(-3)  # [...T,d,m]
 
     # denominator
-    z = torch.arange(start=1, end=T + 1, device=q.device) * q_ns  # [...T]
+    z = torch.arange(start=1, end=T + 1, device=q.device) * q_norm  # [...T]
     z = z + 2 * torch.einsum('...Td, ...Td -> ...T', q, k_sum)
-    z = z + k_ns_sum
+    z = z + k_norm_sum
     z = 1 / z  # [...T]
 
     # numerator
-    o = torch.einsum('...T, ...Tm -> ...Tm', q_ns, v_sum)
-    o = o + k_ns_v
+    o = torch.einsum('...T, ...Tm -> ...Tm', q_norm, v_sum)
+    o = o + k_norm_v
     o = o + 2 * torch.einsum('...Td, ...Tdm -> ...Tm', q, kv)  # [...,T,m]
     return o * z.unsqueeze(-1)
 
