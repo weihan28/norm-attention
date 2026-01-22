@@ -1,5 +1,7 @@
 import torch
-from torch import Tensor
+from torch import Tensor, nn
+from enum import StrEnum
+
 
 def _norm_squared(x: Tensor) -> Tensor:
     return x.pow(2).sum(-1)
@@ -22,36 +24,69 @@ def naive_norm_attention(q: Tensor, k: Tensor, v: Tensor, mask: Tensor = None, e
     return (z * attn_map) @ v
 
 
-def non_causal_norm_attention(q: Tensor, k: Tensor, v: Tensor, eps=1e-8):
-    """
-    :param q: query of shape [..., T, d]
-    :param k: key of shape [..., T, d]
-    :param v: value of shape [..., T, m]
-    :param eps: small value to avoid division by zero
-    :return: output of shape [..., T, m]
-    """
-    T = q.shape[-2]
-    q_norm = _norm_squared(q) + eps # [...T]
-    k_norm = _norm_squared(k)  # [...T]
+class CacheNames(StrEnum):
+    T = "T"
+    k_sum = "k_sum"
+    v_sum = "v_sum"
+    k_norm_sum = "k_norm_sum"
+    k_norm_v = "k_norm_v"
+    kv = "kv"
 
-    # cache during inference (all of these do not contain T)
-    k_sum = k.sum(-2)  # [...d]
-    v_sum = v.sum(-2)  # [...m]
-    k_norm_sum = k_norm.sum(-1, keepdim=True)  # [...1]
-    k_norm_v = torch.einsum('...T, ...Tm -> ...m', k_norm, v)  # [...m]
-    kv = k.transpose(-2, -1) @ v  # [...,d,m]
 
-    # denominator
-    z = T * q_norm  # [...T]
-    z = z + 2 * torch.einsum('...Td, ...d -> ...T', q, k_sum)
-    z = z + k_norm_sum
-    z = 1 / z  # [...T]
+class NonCausalNormAttention(nn.Module):
 
-    # numerator
-    o = torch.einsum('...T, ...m -> ...Tm', q_norm, v_sum)
-    o = o + k_norm_v.unsqueeze(-2)
-    o = o + 2 * (q @ kv)  # [...,T,m]
-    return o * z.unsqueeze(-1)
+    def __init__(self, kv_cache=False):
+        super().__init__()
+        self.kv_cache = kv_cache
+        for name in  CacheNames:
+            self.register_buffer(name, torch.tensor(0), persistent=False)
+
+    def reset_cache(self):
+        for name in  CacheNames:
+            setattr(self, name, torch.tensor(0))
+
+    def _add_cache(self, value, name):
+        value += getattr(self, name)
+        setattr(self, name, value)
+        return value
+
+    def forward(self, q, k, v, eps=1e-8):
+        """
+         :param q: query of shape [..., T, d]
+         :param k: key of shape [..., T, d]
+         :param v: value of shape [..., T, m]
+         :param eps: small value to avoid division by zero
+         :return: output of shape [..., T, m]
+         """
+        T = q.shape[-2]
+        q_norm = _norm_squared(q) + eps  # [...T]
+        k_norm = _norm_squared(k)  # [...T]
+
+        k_sum = k.sum(-2)  # [...d]
+        v_sum = v.sum(-2)  # [...m]
+        k_norm_sum = k_norm.sum(-1, keepdim=True)  # [...1]
+        k_norm_v = torch.einsum('...T, ...Tm -> ...m', k_norm, v)  # [...m]
+        kv = k.transpose(-2, -1) @ v  # [...,d,m]
+
+        if self.kv_cache:
+            T = self._add_cache(T, CacheNames.T)
+            k_sum = self._add_cache(k_sum, CacheNames.k_sum)
+            v_sum = self._add_cache(v_sum, CacheNames.v_sum)
+            k_norm_sum = self._add_cache(k_norm_sum, CacheNames.k_norm_sum)
+            k_norm_v = self._add_cache(k_norm_v, CacheNames.k_norm_v)
+            kv = self._add_cache(kv, CacheNames.kv)
+
+        # denominator
+        z = T * q_norm  # [...T]
+        z = z + 2 * torch.einsum('...Td, ...d -> ...T', q, k_sum)
+        z = z + k_norm_sum
+        z = 1 / z  # [...T]
+
+        # numerator
+        o = torch.einsum('...T, ...m -> ...Tm', q_norm, v_sum)
+        o = o + k_norm_v.unsqueeze(-2)
+        o = o + 2 * (q @ kv)  # [...,T,m]
+        return o * z.unsqueeze(-1)
 
 
 def causal_norm_attention(q: Tensor, k: Tensor, v: Tensor, eps=1e-8):
@@ -92,16 +127,17 @@ if __name__ == '__main__':
     B, T, H = 2, 10, 3
     D, M = 64, 4
 
+    #### Correctness Tests
     atol = 1e-6
     tests = 10000
-
     print("Running Test for non causal norm attention")
     start = time.perf_counter()
+    non_causal_attention = NonCausalNormAttention(kv_cache=False)
     for i in range(tests):
         q = torch.randn(B, H, T, D)
         k = torch.randn(B, H, T, D)
         v = torch.randn(B, H, T, M)
-        o = non_causal_norm_attention(q, k, v)
+        o = non_causal_attention(q, k, v)
         o2 = naive_norm_attention(q, k, v)
         assert torch.allclose(o, o2, atol=atol)
     end = time.perf_counter()
@@ -117,5 +153,32 @@ if __name__ == '__main__':
         o = causal_norm_attention(q, k, v)
         o2 = naive_norm_attention(q, k, v, mask=extract_mask(mask, T))
         assert torch.allclose(o, o2, atol=atol)
+    end = time.perf_counter()
+    print(f"{end - start:.6f} s")
+
+    #### kv cache
+    print("Running Test for non_causal attention with KV Caching")
+    start = time.perf_counter()
+    non_causal_attention = NonCausalNormAttention(kv_cache=True)
+    for i in range(tests):
+        q = torch.randn(B, H, T, D)
+        k = torch.randn(B, H, T, D)
+        v = torch.randn(B, H, T, M)
+        half = T // 2
+        last = -1
+
+        # test batch
+        o2 = naive_norm_attention(q[:, :, :last], k[:, :, :last], v[:, :, :last])
+        o = non_causal_attention(q[:, :, :half], k[:, :, :half], v[:, :, :half])
+        o = non_causal_attention(q[:, :, half:last], k[:, :, half:last], v[:, :, half:last])
+        assert torch.allclose(o, o2[:, :, half:], atol=atol)
+
+        # run last
+        o2 = naive_norm_attention(q, k, v)
+        o = non_causal_attention(q[:, :, last:], k[:, :, last:], v[:, :, last:])
+        assert torch.allclose(o, o2[:, :, last:], atol=atol)
+
+        # reset cache
+        non_causal_attention.reset_cache()
     end = time.perf_counter()
     print(f"{end - start:.6f} s")
