@@ -25,7 +25,7 @@ def naive_norm_attention(q: Tensor, k: Tensor, v: Tensor, mask: Tensor = None, e
     return (z * attn_map) @ v
 
 
-class CacheNames(StrEnum):
+class NormCacheNames(StrEnum):
     T = "T"
     k_sum = "k_sum"
     v_sum = "v_sum"
@@ -39,11 +39,11 @@ class NonCausalNormAttention(nn.Module):
     def __init__(self, kv_cache=False):
         super().__init__()
         self.kv_cache = kv_cache
-        for name in CacheNames:
+        for name in NormCacheNames:
             self.register_buffer(name, torch.tensor(0), persistent=False)
 
     def reset_cache(self):
-        for name in CacheNames:
+        for name in NormCacheNames:
             setattr(self, name, torch.tensor(0))
 
     def _add_cache(self, value, name):
@@ -70,12 +70,12 @@ class NonCausalNormAttention(nn.Module):
         kv = k.transpose(-2, -1) @ v  # [...,d,m]
 
         if self.kv_cache:
-            T = self._add_cache(T, CacheNames.T)
-            k_sum = self._add_cache(k_sum, CacheNames.k_sum)
-            v_sum = self._add_cache(v_sum, CacheNames.v_sum)
-            k_norm_sum = self._add_cache(k_norm_sum, CacheNames.k_norm_sum)
-            k_norm_v = self._add_cache(k_norm_v, CacheNames.k_norm_v)
-            kv = self._add_cache(kv, CacheNames.kv)
+            T = self._add_cache(T, NormCacheNames.T)
+            k_sum = self._add_cache(k_sum, NormCacheNames.k_sum)
+            v_sum = self._add_cache(v_sum, NormCacheNames.v_sum)
+            k_norm_sum = self._add_cache(k_norm_sum, NormCacheNames.k_norm_sum)
+            k_norm_v = self._add_cache(k_norm_v, NormCacheNames.k_norm_v)
+            kv = self._add_cache(kv, NormCacheNames.kv)
 
         # denominator
         z = T * q_norm  # [...T]
