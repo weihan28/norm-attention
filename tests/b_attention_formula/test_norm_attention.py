@@ -1,7 +1,7 @@
 import unittest
 
-from b_attention_formula.norm_attention import *
-from utils.decorators import Timed
+from src.b_attention_formula.norm_attention import *
+from src.utils.decorators import Timed
 
 
 class TestNormAttention(unittest.TestCase):

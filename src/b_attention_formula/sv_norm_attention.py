@@ -24,7 +24,8 @@ def naive_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Ten
         attn_map_n = attn_map_n * mask
     z = attn_map_p.sum(-1, keepdim=True) + attn_map_n.sum(-1, keepdim=True)
     z = 1 / z
-    return z * (attn_map_p@v_p + attn_map_n@v_n)
+    return z * (attn_map_p @ v_p + attn_map_n @ v_n)
+
 
 class SVCacheNames(StrEnum):
     T = "T"
@@ -33,6 +34,7 @@ class SVCacheNames(StrEnum):
     k_norm_sum = "k_norm_sum"
     k_norm_vp = "k_norm_vp"
     k_vn = "k_vn"
+
 
 class NonCausalSplitValueNormAttention(nn.Module):
 
@@ -80,11 +82,10 @@ class NonCausalSplitValueNormAttention(nn.Module):
         # denominator
         z = T * q_norm  # [...T]
         z = z + k_norm_sum
-        z = 1 / (2*z)  # [...T]
+        z = 1 / (2 * z)  # [...T]
 
         # numerator
         o = torch.einsum('...T, ...m -> ...Tm', q_norm, vp_sum)
         o = o + k_norm_vp.unsqueeze(-2)
         o = o + 2 * (q @ k_vn)  # [...,T,m]
         return o * z.unsqueeze(-1)
-
