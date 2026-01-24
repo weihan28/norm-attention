@@ -1,6 +1,7 @@
+from enum import StrEnum
+
 import torch
 from torch import Tensor, nn
-from enum import StrEnum
 
 
 def _norm_squared(x: Tensor) -> Tensor:
@@ -38,11 +39,11 @@ class NonCausalNormAttention(nn.Module):
     def __init__(self, kv_cache=False):
         super().__init__()
         self.kv_cache = kv_cache
-        for name in  CacheNames:
+        for name in CacheNames:
             self.register_buffer(name, torch.tensor(0), persistent=False)
 
     def reset_cache(self):
-        for name in  CacheNames:
+        for name in CacheNames:
             setattr(self, name, torch.tensor(0))
 
     def _add_cache(self, value, name):
@@ -79,7 +80,7 @@ class NonCausalNormAttention(nn.Module):
         # denominator
         z = T * q_norm  # [...T]
         z = z + 2 * torch.einsum('...Td, ...d -> ...T', q, k_sum)
-        z = z + k_norm_sum
+        z = z + k_norm_sum + eps
         z = 1 / z  # [...T]
 
         # numerator
@@ -119,66 +120,3 @@ def causal_norm_attention(q: Tensor, k: Tensor, v: Tensor, eps=1e-8):
     o = o + k_norm_v
     o = o + 2 * torch.einsum('...Td, ...Tdm -> ...Tm', q, kv)  # [...,T,m]
     return o * z.unsqueeze(-1)
-
-
-if __name__ == '__main__':
-    import time
-
-    B, T, H = 2, 10, 3
-    D, M = 64, 4
-
-    #### Correctness Tests
-    atol = 1e-6
-    tests = 10000
-    print("Running Test for non causal norm attention")
-    start = time.perf_counter()
-    non_causal_attention = NonCausalNormAttention(kv_cache=False)
-    for i in range(tests):
-        q = torch.randn(B, H, T, D)
-        k = torch.randn(B, H, T, D)
-        v = torch.randn(B, H, T, M)
-        o = non_causal_attention(q, k, v)
-        o2 = naive_norm_attention(q, k, v)
-        assert torch.allclose(o, o2, atol=atol)
-    end = time.perf_counter()
-    print(f"{end - start:.6f} s")
-
-    print("Running Test for causal norm attention")
-    start = time.perf_counter()
-    mask = generate_mask(2 * T)
-    for i in range(tests):
-        q = torch.randn(B, H, T, D)
-        k = torch.randn(B, H, T, D)
-        v = torch.randn(B, H, T, M)
-        o = causal_norm_attention(q, k, v)
-        o2 = naive_norm_attention(q, k, v, mask=extract_mask(mask, T))
-        assert torch.allclose(o, o2, atol=atol)
-    end = time.perf_counter()
-    print(f"{end - start:.6f} s")
-
-    #### kv cache
-    print("Running Test for non_causal attention with KV Caching")
-    start = time.perf_counter()
-    non_causal_attention = NonCausalNormAttention(kv_cache=True)
-    for i in range(tests):
-        q = torch.randn(B, H, T, D)
-        k = torch.randn(B, H, T, D)
-        v = torch.randn(B, H, T, M)
-        half = T // 2
-        last = -1
-
-        # test batch
-        o2 = naive_norm_attention(q[:, :, :last], k[:, :, :last], v[:, :, :last])
-        o = non_causal_attention(q[:, :, :half], k[:, :, :half], v[:, :, :half])
-        o = non_causal_attention(q[:, :, half:last], k[:, :, half:last], v[:, :, half:last])
-        assert torch.allclose(o, o2[:, :, half:], atol=atol)
-
-        # run last
-        o2 = naive_norm_attention(q, k, v)
-        o = non_causal_attention(q[:, :, last:], k[:, :, last:], v[:, :, last:])
-        assert torch.allclose(o, o2[:, :, last:], atol=atol)
-
-        # reset cache
-        non_causal_attention.reset_cache()
-    end = time.perf_counter()
-    print(f"{end - start:.6f} s")
