@@ -89,3 +89,34 @@ class NonCausalSplitValueNormAttention(nn.Module):
         o = o + k_norm_vp.unsqueeze(-2)
         o = o + 2 * (q @ k_vn)  # [...,T,m]
         return o * z.unsqueeze(-1)
+
+
+def causal_sv_norm_attention(q: Tensor, k: Tensor, vp: Tensor, vn: Tensor):
+    """
+    :param q: query of shape [..., T, d]
+    :param k: key of shape [..., T, d]
+    :param vp: value of shape [..., T, m]
+    :param vn: value of shape [..., T, m]
+    :return: output of shape [..., T, m]
+    """
+    vp, vn = vp + vn, vp - vn
+
+    T = q.shape[-2]
+    q_norm = _norm_squared(q)  # [...T]
+    k_norm = _norm_squared(k)  # [...T]
+
+    vp_sum = vp.cumsum(-2)  # [...T, m]
+    k_norm_sum = k_norm.cumsum(-1)  # [...T]
+    k_norm_vp = torch.einsum('...T, ...Tm -> ...Tm', k_norm, vp).cumsum(-2)  # [..., T, m]
+    k_vn = torch.einsum('...Td, ...Tm -> ...Tdm', k, vn).cumsum(-3)  # [...T,d,m]
+
+    # denominator
+    z = torch.arange(start=1, end=T + 1, device=q.device) * q_norm  # [...T]
+    z = z + k_norm_sum
+    z = 1 / (2 * z)  # [...T]
+
+    # numerator
+    o = torch.einsum('...T, ...Tm -> ...Tm', q_norm, vp_sum)
+    o = o + k_norm_vp
+    o = o + 2 * torch.einsum('...Td, ...Tdm -> ...Tm', q, k_vn)  # [...,T,m]
+    return o * z.unsqueeze(-1)

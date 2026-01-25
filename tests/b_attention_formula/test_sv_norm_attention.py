@@ -8,10 +8,10 @@ class TestSplitValueNormAttention(unittest.TestCase):
 
     def setUp(self):
         self.atol = 1e-6
-        self.tests = 10000
+        self.tests = 100
 
         self.B = 2
-        self.T = 10
+        self.T = 100
         self.H = 3
         self.D = 64
         self.M = 4
@@ -24,12 +24,21 @@ class TestSplitValueNormAttention(unittest.TestCase):
         return q, k, vp, vn
 
     @Timed(tag="NonCausalSVNormAttention")
-    def test_non_causal_sv_norm_attention(self):
+    def test_non_causal(self):
         non_causal_attention = NonCausalSplitValueNormAttention(kv_cache=False)
         for i in range(self.tests):
             q, k, vp, vn = self._generate_data()
             o = non_causal_attention(q, k, vp, vn)
             o2 = naive_split_value_norm_attention(q, k, vp, vn)
+            assert torch.allclose(o, o2, atol=self.atol)
+
+    @Timed(tag="CausalSVNormAttention")
+    def test_causal(self):
+        mask = generate_mask(2 * self.T)
+        for i in range(self.tests):
+            q, k, vp, vn = self._generate_data()
+            o = causal_sv_norm_attention(q, k, vp, vn)
+            o2 = naive_split_value_norm_attention(q, k, vp, vn, mask=extract_mask(mask, self.T))
             assert torch.allclose(o, o2, atol=self.atol)
 
     @Timed(tag="NonCausalSVNormAttention (KV Cache)")

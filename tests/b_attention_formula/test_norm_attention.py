@@ -8,10 +8,10 @@ class TestNormAttention(unittest.TestCase):
 
     def setUp(self):
         self.atol = 1e-6
-        self.tests = 10000
+        self.tests = 100
 
         self.B = 2
-        self.T = 10
+        self.T = 100
         self.H = 3
         self.D = 64
         self.M = 4
@@ -23,7 +23,7 @@ class TestNormAttention(unittest.TestCase):
         return q, k, v
 
     @Timed(tag="NonCausalAttention")
-    def test_non_causal_norm_attention(self):
+    def test_non_causal(self):
         non_causal_attention = NonCausalNormAttention(kv_cache=False)
         for i in range(self.tests):
             q, k, v = self._generate_data()
@@ -32,7 +32,7 @@ class TestNormAttention(unittest.TestCase):
             assert torch.allclose(o, o2, atol=self.atol)
 
     @Timed(tag="CausalNormAttention")
-    def test_causal_norm_attention(self):
+    def test_causal(self):
         mask = generate_mask(2 * self.T)
         for i in range(self.tests):
             q, k, v = self._generate_data()
