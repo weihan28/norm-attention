@@ -1,1 +1,0 @@
-<img src="assets/attn_formula.png">

@@ -1,6 +1,11 @@
 import time
 from functools import wraps
 
+import torch
+
+# temporary global seed
+SEED = 42
+
 
 class Timed:
     def __init__(self, tag=None):
@@ -19,5 +24,22 @@ class Timed:
             except Exception as e:
                 print(f"{name}: Something went wrong.")
                 raise
+
+        return wrapper
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+
+
+class SetSeed:
+    def __init__(self, seed=None):
+        self.seed = seed if seed is not None else SEED
+
+    def __call__(self, fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            set_seed(self.seed)
+            return fn(*args, **kwargs)
 
         return wrapper
