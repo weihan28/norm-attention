@@ -2,6 +2,7 @@ from enum import StrEnum
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 
 def _norm_squared(x: Tensor) -> Tensor:
@@ -16,7 +17,15 @@ def extract_mask(mask: Tensor, T: int) -> Tensor:
     return mask[:T, :T]
 
 
-def naive_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Tensor, mask: Tensor = None) -> Tensor:
+def _rms_norm(x):
+    return F.rms_norm(x, (x.size(-1),))
+    # return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True))
+
+
+def naive_qk_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Tensor, mask: Tensor = None) -> Tensor:
+    q = _rms_norm(q)
+    k = _rms_norm(k)
+
     attn_map_p = _norm_squared(q.unsqueeze(-2) + k.unsqueeze(-3))  # [..., T, T]
     attn_map_n = _norm_squared(q.unsqueeze(-2) + (-k).unsqueeze(-3))  # [..., T, T]
     if mask is not None:
@@ -27,24 +36,22 @@ def naive_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Ten
     return z * (attn_map_p @ v_p + attn_map_n @ v_n)
 
 
-class SVCacheNames(StrEnum):
+class QKSVCacheNames(StrEnum):
     T = "T"
     vp_sum = "vp_sum"
-    k_norm_sum = "k_norm_sum"
-    k_norm_vp = "k_norm_vp"
     k_vn = "k_vn"
 
 
-class NonCausalSplitValueNormAttention(nn.Module):
+class NonCausalQKSplitValueNormAttention(nn.Module):
 
     def __init__(self, kv_cache=False):
         super().__init__()
         self.kv_cache = kv_cache
-        for name in SVCacheNames:
+        for name in QKSVCacheNames:
             self.register_buffer(name, torch.tensor(0), persistent=False)
 
     def reset_cache(self):
-        for name in SVCacheNames:
+        for name in QKSVCacheNames:
             setattr(self, name, torch.tensor(0))
 
     def _add_cache(self, value, name):
@@ -60,37 +67,31 @@ class NonCausalSplitValueNormAttention(nn.Module):
         :param vn: value of shape [..., T, m]
         :return: output of shape [..., T, m]
         """
+        q = _rms_norm(q)
+        k = _rms_norm(k)
+
         vp, vn = vp + vn, vp - vn
 
-        T = q.shape[-2]
-        q_norm = _norm_squared(q)  # [...T]
-        k_norm = _norm_squared(k)  # [...T]
+        T, d = q.shape[-2:]
 
         vp_sum = vp.sum(-2)  # [...m]
-        k_norm_sum = k_norm.sum(-1, keepdim=True)  # [...1]
-        k_norm_vp = torch.einsum('...T, ...Tm -> ...m', k_norm, vp)  # [...m]
         k_vn = k.transpose(-2, -1) @ vn  # [...,d,m]
 
         if self.kv_cache:
-            T = self._add_cache(T, SVCacheNames.T)
-            vp_sum = self._add_cache(vp_sum, SVCacheNames.vp_sum)
-            k_norm_sum = self._add_cache(k_norm_sum, SVCacheNames.k_norm_sum)
-            k_norm_vp = self._add_cache(k_norm_vp, SVCacheNames.k_norm_vp)
-            k_vn = self._add_cache(k_vn, SVCacheNames.k_vn)
+            T = self._add_cache(T, QKSVCacheNames.T)
+            vp_sum = self._add_cache(vp_sum, QKSVCacheNames.vp_sum)
+            k_vn = self._add_cache(k_vn, QKSVCacheNames.k_vn)
 
         # denominator
-        z = T * q_norm  # [...T]
-        z = z + k_norm_sum
-        z = 1 / (2 * z)  # [...T]
+        z = 1 / (2 * T)
 
         # numerator
-        o = torch.einsum('...T, ...m -> ...Tm', q_norm, vp_sum)
-        o = o + k_norm_vp.unsqueeze(-2)
-        o = o + 2 * (q @ k_vn)  # [...,T,m]
-        return o * z.unsqueeze(-1)
+        o = vp_sum.unsqueeze(-2)  # [...,1,m]
+        o = o + (1 / d) * (q @ k_vn)  # [...,T,m]
+        return o * z
 
 
-def causal_sv_norm_attention(q: Tensor, k: Tensor, vp: Tensor, vn: Tensor):
+def causal_qk_split_value_norm_attention(q: Tensor, k: Tensor, vp: Tensor, vn: Tensor):
     """
     :param q: query of shape [..., T, d]
     :param k: key of shape [..., T, d]
@@ -98,24 +99,20 @@ def causal_sv_norm_attention(q: Tensor, k: Tensor, vp: Tensor, vn: Tensor):
     :param vn: value of shape [..., T, m]
     :return: output of shape [..., T, m]
     """
+    q = _rms_norm(q)
+    k = _rms_norm(k)
     vp, vn = vp + vn, vp - vn
 
-    T = q.shape[-2]
-    q_norm = _norm_squared(q)  # [...T]
-    k_norm = _norm_squared(k)  # [...T]
+    T, d = q.shape[-2:]
 
     vp_sum = vp.cumsum(-2)  # [...T, m]
-    k_norm_sum = k_norm.cumsum(-1)  # [...T]
-    k_norm_vp = torch.einsum('...T, ...Tm -> ...Tm', k_norm, vp).cumsum(-2)  # [..., T, m]
     k_vn = torch.einsum('...Td, ...Tm -> ...Tdm', k, vn).cumsum(-3)  # [...T,d,m]
 
     # denominator
-    z = torch.arange(start=1, end=T + 1, device=q.device) * q_norm  # [...T]
-    z = z + k_norm_sum
-    z = 1 / (2 * z)  # [...T]
+    z = 2 * torch.arange(start=1, end=T + 1, device=q.device)  # [...T]
+    z = 1 / z
 
     # numerator
-    o = torch.einsum('...T, ...Tm -> ...Tm', q_norm, vp_sum)
-    o = o + k_norm_vp
-    o = o + 2 * torch.einsum('...Td, ...Tdm -> ...Tm', q, k_vn)  # [...,T,m]
+    o = vp_sum
+    o = o + (1 / d) * torch.einsum('...Td, ...Tdm -> ...Tm', q, k_vn)  # [...,T,m]
     return o * z.unsqueeze(-1)
