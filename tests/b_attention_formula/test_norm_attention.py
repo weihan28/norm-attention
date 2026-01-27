@@ -2,12 +2,12 @@ import unittest
 
 from src.b_attention_formula.norm_attention import *
 from src.utils.decorators import Timed
+from tests.b_attention_formula.mask_util import generate_mask, extract_mask
 
 
 class TestNormAttention(unittest.TestCase):
 
     def setUp(self):
-        self.atol = 1e-6
         self.tests = 100
 
         self.B = 2
@@ -20,9 +20,10 @@ class TestNormAttention(unittest.TestCase):
         q = torch.randn(self.B, self.H, self.T, self.D)
         k = torch.randn(self.B, self.H, self.T, self.D)
         v = torch.randn(self.B, self.H, self.T, self.M)
+        self.atol = torch.finfo(q.dtype).eps
         return q, k, v
 
-    @Timed(tag="NonCausalAttention")
+    @Timed(tag="NonCausal-NormAttention")
     def test_non_causal(self):
         non_causal_attention = NonCausalNormAttention(kv_cache=False)
         for i in range(self.tests):
@@ -31,7 +32,7 @@ class TestNormAttention(unittest.TestCase):
             o2 = naive_norm_attention(q, k, v)
             assert torch.allclose(o, o2, atol=self.atol)
 
-    @Timed(tag="CausalNormAttention")
+    @Timed(tag="Causal-NormAttention")
     def test_causal(self):
         mask = generate_mask(2 * self.T)
         for i in range(self.tests):
@@ -40,7 +41,7 @@ class TestNormAttention(unittest.TestCase):
             o2 = naive_norm_attention(q, k, v, mask=extract_mask(mask, self.T))
             assert torch.allclose(o, o2, atol=self.atol)
 
-    @Timed(tag="NonCausalNormAttention (KV Cache)")
+    @Timed(tag="NonCausal-NormAttention (KV Cache)")
     def test_non_causal_kv_cache(self):
         non_causal_attention = NonCausalNormAttention(kv_cache=True)
         for i in range(self.tests):

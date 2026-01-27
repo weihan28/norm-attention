@@ -9,17 +9,8 @@ def _norm_squared(x: Tensor) -> Tensor:
     return x.pow(2).sum(-1)
 
 
-def generate_mask(max_seq_len: int) -> Tensor:
-    return torch.tril(torch.ones(max_seq_len, max_seq_len))
-
-
-def extract_mask(mask: Tensor, T: int) -> Tensor:
-    return mask[:T, :T]
-
-
 def _rms_norm(x):
     return F.rms_norm(x, (x.size(-1),))
-    # return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True))
 
 
 def naive_qk_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Tensor, mask: Tensor = None) -> Tensor:
@@ -36,7 +27,7 @@ def naive_qk_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: 
     return z * (attn_map_p @ v_p + attn_map_n @ v_n)
 
 
-class QKSVCacheNames(StrEnum):
+class _CacheNames(StrEnum):
     T = "T"
     vp_sum = "vp_sum"
     k_vn = "k_vn"
@@ -47,11 +38,11 @@ class NonCausalQKSplitValueNormAttention(nn.Module):
     def __init__(self, kv_cache=False):
         super().__init__()
         self.kv_cache = kv_cache
-        for name in QKSVCacheNames:
+        for name in _CacheNames:
             self.register_buffer(name, torch.tensor(0), persistent=False)
 
     def reset_cache(self):
-        for name in QKSVCacheNames:
+        for name in _CacheNames:
             setattr(self, name, torch.tensor(0))
 
     def _add_cache(self, value, name):
@@ -78,9 +69,9 @@ class NonCausalQKSplitValueNormAttention(nn.Module):
         k_vn = k.transpose(-2, -1) @ vn  # [...,d,m]
 
         if self.kv_cache:
-            T = self._add_cache(T, QKSVCacheNames.T)
-            vp_sum = self._add_cache(vp_sum, QKSVCacheNames.vp_sum)
-            k_vn = self._add_cache(k_vn, QKSVCacheNames.k_vn)
+            T = self._add_cache(T, _CacheNames.T)
+            vp_sum = self._add_cache(vp_sum, _CacheNames.vp_sum)
+            k_vn = self._add_cache(k_vn, _CacheNames.k_vn)
 
         # denominator
         z = 1 / (2 * T)

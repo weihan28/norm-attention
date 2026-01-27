@@ -8,14 +8,6 @@ def _norm_squared(x: Tensor) -> Tensor:
     return x.pow(2).sum(-1)
 
 
-def generate_mask(max_seq_len: int) -> Tensor:
-    return torch.tril(torch.ones(max_seq_len, max_seq_len))
-
-
-def extract_mask(mask: Tensor, T: int) -> Tensor:
-    return mask[:T, :T]
-
-
 def naive_norm_attention(q: Tensor, k: Tensor, v: Tensor, mask: Tensor = None, eps=1e-8) -> Tensor:
     attn_map = _norm_squared(q.unsqueeze(-2) + k.unsqueeze(-3))  # [..., T, T]
     attn_map = attn_map + eps
@@ -25,7 +17,7 @@ def naive_norm_attention(q: Tensor, k: Tensor, v: Tensor, mask: Tensor = None, e
     return (z * attn_map) @ v
 
 
-class NormCacheNames(StrEnum):
+class _CacheNames(StrEnum):
     T = "T"
     k_sum = "k_sum"
     v_sum = "v_sum"
@@ -39,11 +31,11 @@ class NonCausalNormAttention(nn.Module):
     def __init__(self, kv_cache=False):
         super().__init__()
         self.kv_cache = kv_cache
-        for name in NormCacheNames:
+        for name in _CacheNames:
             self.register_buffer(name, torch.tensor(0), persistent=False)
 
     def reset_cache(self):
-        for name in NormCacheNames:
+        for name in _CacheNames:
             setattr(self, name, torch.tensor(0))
 
     def _add_cache(self, value, name):
@@ -70,12 +62,12 @@ class NonCausalNormAttention(nn.Module):
         kv = k.transpose(-2, -1) @ v  # [...,d,m]
 
         if self.kv_cache:
-            T = self._add_cache(T, NormCacheNames.T)
-            k_sum = self._add_cache(k_sum, NormCacheNames.k_sum)
-            v_sum = self._add_cache(v_sum, NormCacheNames.v_sum)
-            k_norm_sum = self._add_cache(k_norm_sum, NormCacheNames.k_norm_sum)
-            k_norm_v = self._add_cache(k_norm_v, NormCacheNames.k_norm_v)
-            kv = self._add_cache(kv, NormCacheNames.kv)
+            T = self._add_cache(T, _CacheNames.T)
+            k_sum = self._add_cache(k_sum, _CacheNames.k_sum)
+            v_sum = self._add_cache(v_sum, _CacheNames.v_sum)
+            k_norm_sum = self._add_cache(k_norm_sum, _CacheNames.k_norm_sum)
+            k_norm_v = self._add_cache(k_norm_v, _CacheNames.k_norm_v)
+            kv = self._add_cache(kv, _CacheNames.kv)
 
         # denominator
         z = T * q_norm  # [...T]

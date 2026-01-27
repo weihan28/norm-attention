@@ -2,6 +2,7 @@ import unittest
 
 from src.b_attention_formula.qksv_norm_attention import *
 from src.utils.decorators import Timed
+from tests.b_attention_formula.mask_util import generate_mask, extract_mask
 
 
 class TestQKNormSplitValueNormAttention(unittest.TestCase):
@@ -23,7 +24,7 @@ class TestQKNormSplitValueNormAttention(unittest.TestCase):
         self.atol = torch.finfo(q.dtype).eps
         return q, k, vp, vn
 
-    @Timed(tag="NonCausalQKSVNormAttention")
+    @Timed(tag="NonCausal-QKSVNormAttention")
     def test_non_causal(self):
         non_causal_attention = NonCausalQKSplitValueNormAttention(kv_cache=False)
         for _ in range(self.tests):
@@ -32,7 +33,7 @@ class TestQKNormSplitValueNormAttention(unittest.TestCase):
             o2 = naive_qk_split_value_norm_attention(q, k, vp, vn)
             assert torch.allclose(o, o2, atol=self.atol)
 
-    @Timed(tag="CausalQKSVNormAttention")
+    @Timed(tag="Causal-QKSVNormAttention")
     def test_causal(self):
         mask = generate_mask(2 * self.T)
         for _ in range(self.tests):
@@ -41,7 +42,7 @@ class TestQKNormSplitValueNormAttention(unittest.TestCase):
             o2 = naive_qk_split_value_norm_attention(q, k, vp, vn, mask=extract_mask(mask, self.T))
             assert torch.allclose(o, o2, atol=self.atol)
 
-    @Timed(tag="NonCausalQKSVNormAttention (KV Cache)")
+    @Timed(tag="NonCausal-QKSVNormAttention (KV Cache)")
     def test_non_causal_kv_cache(self):
         non_causal_attention = NonCausalQKSplitValueNormAttention(kv_cache=True)
         for _ in range(self.tests):

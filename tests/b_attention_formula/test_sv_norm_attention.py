@@ -2,6 +2,7 @@ import unittest
 
 from src.b_attention_formula.sv_norm_attention import *
 from src.utils.decorators import Timed
+from tests.b_attention_formula.mask_util import generate_mask, extract_mask
 
 
 class TestSplitValueNormAttention(unittest.TestCase):
@@ -21,6 +22,7 @@ class TestSplitValueNormAttention(unittest.TestCase):
         k = torch.randn(self.B, self.H, self.T, self.D)
         vp = torch.randn(self.B, self.H, self.T, self.M)
         vn = torch.randn(self.B, self.H, self.T, self.M)
+        self.atol = torch.finfo(q.dtype).eps
         return q, k, vp, vn
 
     @Timed(tag="NonCausalSVNormAttention")

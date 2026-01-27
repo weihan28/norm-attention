@@ -8,14 +8,6 @@ def _norm_squared(x: Tensor) -> Tensor:
     return x.pow(2).sum(-1)
 
 
-def generate_mask(max_seq_len: int) -> Tensor:
-    return torch.tril(torch.ones(max_seq_len, max_seq_len))
-
-
-def extract_mask(mask: Tensor, T: int) -> Tensor:
-    return mask[:T, :T]
-
-
 def naive_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Tensor, mask: Tensor = None) -> Tensor:
     attn_map_p = _norm_squared(q.unsqueeze(-2) + k.unsqueeze(-3))  # [..., T, T]
     attn_map_n = _norm_squared(q.unsqueeze(-2) + (-k).unsqueeze(-3))  # [..., T, T]
@@ -27,7 +19,7 @@ def naive_split_value_norm_attention(q: Tensor, k: Tensor, v_p: Tensor, v_n: Ten
     return z * (attn_map_p @ v_p + attn_map_n @ v_n)
 
 
-class SVCacheNames(StrEnum):
+class _CacheNames(StrEnum):
     T = "T"
     vp_sum = "vp_sum"
     k_norm_sum = "k_norm_sum"
@@ -40,11 +32,11 @@ class NonCausalSplitValueNormAttention(nn.Module):
     def __init__(self, kv_cache=False):
         super().__init__()
         self.kv_cache = kv_cache
-        for name in SVCacheNames:
+        for name in _CacheNames:
             self.register_buffer(name, torch.tensor(0), persistent=False)
 
     def reset_cache(self):
-        for name in SVCacheNames:
+        for name in _CacheNames:
             setattr(self, name, torch.tensor(0))
 
     def _add_cache(self, value, name):
@@ -72,11 +64,11 @@ class NonCausalSplitValueNormAttention(nn.Module):
         k_vn = k.transpose(-2, -1) @ vn  # [...,d,m]
 
         if self.kv_cache:
-            T = self._add_cache(T, SVCacheNames.T)
-            vp_sum = self._add_cache(vp_sum, SVCacheNames.vp_sum)
-            k_norm_sum = self._add_cache(k_norm_sum, SVCacheNames.k_norm_sum)
-            k_norm_vp = self._add_cache(k_norm_vp, SVCacheNames.k_norm_vp)
-            k_vn = self._add_cache(k_vn, SVCacheNames.k_vn)
+            T = self._add_cache(T, _CacheNames.T)
+            vp_sum = self._add_cache(vp_sum, _CacheNames.vp_sum)
+            k_norm_sum = self._add_cache(k_norm_sum, _CacheNames.k_norm_sum)
+            k_norm_vp = self._add_cache(k_norm_vp, _CacheNames.k_norm_vp)
+            k_vn = self._add_cache(k_vn, _CacheNames.k_vn)
 
         # denominator
         z = T * q_norm  # [...T]
