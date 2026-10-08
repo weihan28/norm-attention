@@ -7,3 +7,5 @@ It contains code/notes where I implemented various papers such as:
 - kernel based linear attention & hedgehog
 
 which directly inspired some of the decisions made in this architecture.
+
+Update: logically i had proved that my new design has the computational capacity of a standard linear attention, so further exploration is deemed invalid. 
